@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 
 class StudentAbsencesPage extends StatefulWidget {
   final int studentId;
@@ -29,6 +30,8 @@ class _StudentAbsencesPageState extends State<StudentAbsencesPage> {
   List<Map<String, dynamic>> absences = [];
   List<Map<String, dynamic>> students = [];
   List<Map<String, dynamic>> subjects = [];
+  List<String> departments = ['1', '2'];
+  String selectedDepartment = '1';
 
   late String selectedStudent;
   late int selectedSubject = 0;
@@ -118,6 +121,55 @@ class _StudentAbsencesPageState extends State<StudentAbsencesPage> {
     return subjects.any((element) => element['codMatiere'] as int == subjectId);
   }
 
+  String getFormattedDate(String date) {
+    DateTime dateA = DateTime.parse(date);
+    final DateFormat dateFormat = DateFormat('dd-MM-yyyy');
+
+    return dateFormat.format(dateA);
+  }
+
+  Future<double> getTotal(int subjectId) async {
+    double total = 0;
+    try {
+      final response = await http.get(
+        Uri.parse('http://10.0.2.2:8082/classes/matieres/total/$subjectId'),
+      );
+
+      if (response.statusCode == 200) {
+        total = double.parse(response.body);
+
+        print('Total: $total');
+      } else {
+        throw Exception('Failed to load total');
+      }
+    } catch (error) {
+      print('Error fetching total: $error');
+    }
+
+    return total;
+  }
+
+  Future<double> all(String studentId) async {
+    double total = 0;
+    try {
+      final response = await http.get(
+        Uri.parse('http://10.0.2.2:8082/absences/total/$studentId'),
+      );
+
+      if (response.statusCode == 200) {
+        total = double.parse(response.body);
+
+        print('Total: $total');
+      } else {
+        throw Exception('Failed to load total');
+      }
+    } catch (error) {
+      print('Error fetching total: $error');
+    }
+
+    return total;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -151,42 +203,74 @@ class _StudentAbsencesPageState extends State<StudentAbsencesPage> {
             ),
 
             SizedBox(height: 16),
-            Text(
-              'Absences for Student ID : $selectedStudent',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            FutureBuilder<double>(
+              future: all(selectedStudent),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Text(
+                    'Loading...',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  );
+                } else if (snapshot.hasError) {
+                  return Text(
+                    'Error: ${snapshot.error}',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  );
+                } else {
+                  double total = snapshot.data ?? 0.0;
+                  return Text(
+                    'Absences for Student ID : $total Hours',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  );
+                }
+              },
             ),
+
             Expanded(
               child: ListView.builder(
                 itemCount: absences.length,
                 itemBuilder: (context, index) {
-                  return Card(
-                    margin: EdgeInsets.all(8),
-                    child: ListTile(
-                      title: Text(
-                          'Subject: ${absences[index]['matiere']['nomMat']}'),
-                      subtitle:
-                          Text('Charge Horaire: ${absences[index]['nha']}'),
-                      trailing: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          IconButton(
-                            icon: Icon(Icons.edit),
-                            onPressed: () {
-                              // Handle update action here
-                              _showUpdateAbsenceForm(context, index);
-                            },
+                  return FutureBuilder<double>(
+                    future: getTotal(absences[index]['matiere']['codMatiere']),
+                    builder: (context, snapshot) {
+                      if (snapshot.connectionState == ConnectionState.waiting) {
+                        return CircularProgressIndicator(); // or any loading indicator
+                      } else if (snapshot.hasError) {
+                        return Text('Error: ${snapshot.error}');
+                      } else {
+                        double total = snapshot.data ?? 0.0;
+                        return Card(
+                          margin: EdgeInsets.all(8),
+                          child: ListTile(
+                            title: Text(
+                                'Subject: ${absences[index]['matiere']['nomMat']}'),
+                            subtitle: Text(
+                              'Charge Horaire: ${absences[index]['nha']} | Date: ${getFormattedDate(absences[index]['dateA'])} | total des absences pour cette matieres: $total',
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.edit),
+                                  onPressed: () {
+                                    // Handle update action here
+                                    _showUpdateAbsenceForm(context, index);
+                                  },
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.delete),
+                                  onPressed: () {
+                                    // Handle delete action here
+                                    _showDeleteConfirmationDialog(
+                                        context, absences[index]['idAbsence']);
+                                  },
+                                ),
+                              ],
+                            ),
                           ),
-                          IconButton(
-                            icon: Icon(Icons.delete),
-                            onPressed: () {
-                              // Handle delete action here
-                              _showDeleteConfirmationDialog(
-                                  context, absences[index]['idAbsence']);
-                            },
-                          ),
-                        ],
-                      ),
-                    ),
+                        );
+                      }
+                    },
                   );
                 },
               ),
@@ -244,91 +328,87 @@ class _StudentAbsencesPageState extends State<StudentAbsencesPage> {
     print(absences[index]['idAbsence'].toString());
     DateTime selectedDate = DateTime.now();
 
-    showModalBottomSheet(
+    double selectedChargeHoraire = 1;
+
+    showDialog(
       context: context,
       builder: (BuildContext context) {
-        return Container(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Update Absence',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 16),
-              // Date picker
-              ElevatedButton(
-                onPressed: () async {
-                  DateTime? pickedDate = await showDatePicker(
-                    context: context,
-                    initialDate: abs,
-                    firstDate: DateTime(1900),
-                    lastDate: DateTime.now(),
-                  );
-                  if (pickedDate != null) {
-                    setState(() {
-                      selectedDate = pickedDate;
-                    });
-                  }
-                },
-                child: Text('Select Date: ${selectedDate.toLocal()}'),
-              ),
-              SizedBox(height: 16),
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return AlertDialog(
+              title: Text('Update Absence'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ElevatedButton(
+                    onPressed: () async {
+                      DateTime? pickedDate = await showDatePicker(
+                        context: context,
+                        initialDate: abs,
+                        firstDate: DateTime(1900),
+                        lastDate: DateTime.now(),
+                      );
+                      if (pickedDate != null) {
+                        setState(() {
+                          selectedDate = pickedDate;
+                        });
+                      }
+                    },
+                    child: Text('Select Date: ${selectedDate.toLocal()}'),
+                  ),
+                  SizedBox(height: 16),
+                  DropdownButton<num>(
+                    value: nha,
+                    onChanged: (num? newValue) {
+                      setState(() {
+                        nha = newValue?.toDouble() ?? 1;
+                      });
+                    },
+                    items: [1, 2, 4, 6, 8]
+                        .map<DropdownMenuItem<num>>(
+                          (num value) => DropdownMenuItem<num>(
+                            value: value,
+                            child: Text('$value hours'),
+                          ),
+                        )
+                        .toList(),
+                  ),
+                  SizedBox(height: 16),
+                  DropdownButton<int>(
+                    value: subjectId,
+                    onChanged: (int? newValue) {
+                      setState(() {
+                        subjectId = newValue ?? 0;
+                      });
+                    },
+                    items: subjects.map<DropdownMenuItem<int>>(
+                      (Map<String, dynamic> subject) {
+                        return DropdownMenuItem<int>(
+                          value: subject['codMatiere'] as int,
+                          child: Text('${subject['nomMat']}'),
+                        );
+                      },
+                    ).toList(),
+                  ),
+                  SizedBox(height: 16),
+                  ElevatedButton(
+                    onPressed: () {
+                      updateAbsence(
+                        absences[index]['idAbsence'].toString(),
+                        nha,
+                        selectedDate,
+                        subjectId,
+                        absences[index]['etudiant']['id'],
+                      );
 
-              DropdownButton<num>(
-                value: nha,
-                onChanged: (num? newValue) {
-                  setState(() {
-                    nha = newValue?.toDouble() ?? 1;
-                  });
-                },
-                items: [1, 2, 4, 6, 8]
-                    .map<DropdownMenuItem<num>>(
-                      (num value) => DropdownMenuItem<num>(
-                        value: value,
-                        child: Text('$value hours'),
-                      ),
-                    )
-                    .toList(),
+                      Navigator.of(context).pop();
+                    },
+                    child: Text('Update Absence'),
+                  ),
+                ],
               ),
-
-              SizedBox(height: 16),
-              // Dropdown for Subjects
-              DropdownButton<int>(
-                value: subjectId,
-                onChanged: (int? newValue) {
-                  setState(() {
-                    subjectId = newValue ?? 0;
-                  });
-                },
-                items: subjects.map<DropdownMenuItem<int>>(
-                  (Map<String, dynamic> subject) {
-                    return DropdownMenuItem<int>(
-                      value: subject['codMatiere'] as int,
-                      child: Text('${subject['nomMat']}'),
-                    );
-                  },
-                ).toList(),
-              ),
-
-              SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () {
-                  updateAbsence(
-                    absences[index]['idAbsence'].toString(),
-                    nha,
-                    selectedDate,
-                    subjectId,
-                    absences[index]['etudiant']['id'],
-                  );
-
-                  Navigator.of(context).pop();
-                },
-                child: Text('Update Absence'),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -380,100 +460,108 @@ class _StudentAbsencesPageState extends State<StudentAbsencesPage> {
   void _showAddAbsenceForm(BuildContext context) async {
     DateTime selectedDate = DateTime.now();
     double selectedChargeHoraire = 1;
+    int selectedMinutes = 0;
 
-    showModalBottomSheet(
+    showDialog(
       context: context,
       builder: (BuildContext context) {
-        return Container(
-          padding: EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'Add Absence',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              SizedBox(height: 16),
-              // Date picker
-              ElevatedButton(
-                onPressed: () async {
-                  DateTime? pickedDate = await showDatePicker(
-                    context: context,
-                    initialDate: selectedDate,
-                    firstDate: DateTime(1900),
-                    lastDate: DateTime.now(),
-                  );
-                  if (pickedDate != null) {
-                    setState(() {
-                      selectedDate = pickedDate;
-                    });
-                  }
-                },
-                child: Text('Select Date: ${selectedDate.toLocal()}'),
-              ),
-              SizedBox(height: 16),
-
-              DropdownButton<num>(
-                value: selectedChargeHoraire,
-                onChanged: (num? newValue) {
-                  setState(() {
-                    selectedChargeHoraire = newValue?.toDouble() ?? 1;
-                  });
-                },
-                items: [1, 2, 4, 6, 8]
-                    .map<DropdownMenuItem<num>>(
-                      (num value) => DropdownMenuItem<num>(
-                        value: value,
-                        child: Text('$value hours'),
+        return StatefulBuilder(
+          builder: (BuildContext context, StateSetter setState) {
+            return Center(
+              child: SizedBox(
+                width: MediaQuery.of(context).size.width * 0.8,
+                child: AlertDialog(
+                  title: Text('Add Absence'),
+                  content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      ElevatedButton(
+                        onPressed: () async {
+                          DateTime? pickedDate = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDate,
+                            firstDate: DateTime(1900),
+                            lastDate: DateTime.now(),
+                          );
+                          if (pickedDate != null) {
+                            setState(() {
+                              selectedDate = pickedDate;
+                            });
+                          }
+                        },
+                        child: Text('Select Date: ${selectedDate.toLocal()}'),
                       ),
-                    )
-                    .toList(),
-              ),
+                      SizedBox(height: 16),
+                      DropdownButton<num>(
+                        value: selectedChargeHoraire,
+                        onChanged: (num? newValue) {
+                          setState(() {
+                            selectedChargeHoraire = newValue?.toDouble() ?? 1;
+                          });
+                        },
+                        items: [1, 2, 4, 6, 8]
+                            .map<DropdownMenuItem<num>>(
+                              (num value) => DropdownMenuItem<num>(
+                                value: value,
+                                child: Text('$value hours'),
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      SizedBox(height: 16),
+                      DropdownButton<int>(
+                        value: selectedSubject,
+                        onChanged: (int? newValue) {
+                          setState(() {
+                            selectedSubject = newValue ?? 0;
+                          });
+                        },
+                        items: subjects.map<DropdownMenuItem<int>>(
+                          (Map<String, dynamic> subject) {
+                            return DropdownMenuItem<int>(
+                              value: subject['codMatiere'] as int,
+                              child: Text('${subject['nomMat']}'),
+                            );
+                          },
+                        ).toList(),
+                      ),
+                    ],
+                  ),
+                  actions: <Widget>[
+                    TextButton(
+                      onPressed: () {
+                        Navigator.of(context).pop();
+                      },
+                      child: Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () async {
+                        final response = await http.post(
+                          Uri.parse('http://10.0.2.2:8082/absences/add'),
+                          headers: {"Content-Type": "application/json"},
+                          body: json.encode({
+                            "matiere": {"codMatiere": selectedSubject},
+                            "etudiant": {"id": int.parse(selectedStudent)},
+                            "dateA": selectedDate.toIso8601String(),
+                            "nha": selectedChargeHoraire
+                          }),
+                        );
 
-              SizedBox(height: 16),
-              // Dropdown for Subjects
-              DropdownButton<int>(
-                value: selectedSubject,
-                onChanged: (int? newValue) {
-                  setState(() {
-                    selectedSubject = newValue ?? 0;
-                  });
-                },
-                items: subjects.map<DropdownMenuItem<int>>(
-                  (Map<String, dynamic> subject) {
-                    return DropdownMenuItem<int>(
-                      value: subject['codMatiere'] as int,
-                      child: Text('${subject['nomMat']}'),
-                    );
-                  },
-                ).toList(),
+                        if (response.statusCode == 200) {
+                          fetchAbsencesForStudent(int.parse(selectedStudent));
+                          Navigator.pop(context);
+                        } else {
+                          print(
+                              'Failed to add absence: ${response.statusCode}');
+                        }
+                      },
+                      child: Text('Add Absence'),
+                    ),
+                  ],
+                ),
               ),
-
-              SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () async {
-                  final response = await http.post(
-                    Uri.parse('http://10.0.2.2:8082/absences/add'),
-                    headers: {"Content-Type": "application/json"},
-                    body: json.encode({
-                      "matiere": {"codMatiere": selectedSubject},
-                      "etudiant": {"id": int.parse(selectedStudent)},
-                      "dateA": selectedDate.toIso8601String(),
-                      "nha": selectedChargeHoraire
-                    }),
-                  );
-
-                  if (response.statusCode == 200) {
-                    fetchAbsencesForStudent(int.parse(selectedStudent));
-                    Navigator.pop(context);
-                  } else {
-                    print('Failed to add absence: ${response.statusCode}');
-                  }
-                },
-                child: Text('Add Absence'),
-              ),
-            ],
-          ),
+            );
+          },
         );
       },
     );
